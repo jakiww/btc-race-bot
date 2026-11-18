@@ -17,6 +17,9 @@
 //     60 bars ago (a 1-hour return over +0.35%), full cash.
 //   exit (holding): the close falls 80 bps below the highest close
 //     since entry, or 360 bars have passed since entry.
+//   cooldown: after any exit, 30 bars must pass before the next entry,
+//     so a stop-out is not followed by an immediate re-entry into the
+//     same fading move.
 //   sizing: one full-size buy of all cash; one full sell of the whole
 //     position. max_slippage_bps 200 guards against gap opens.
 // Warm-up batches never order. A batch with no CBBTC bar adds no close.
@@ -41,6 +44,9 @@ const closes: bigint[] = [];
 let peakClose: bigint | null = null;
 // Bars held in the current position.
 let heldBars = 0;
+// Bar count (closes.length) before which no new entry is allowed;
+// set on every exit, 0 until the first exit.
+let cooldownUntil = 0;
 
 await runBars({
   onBatch(state, batch) {
@@ -58,7 +64,7 @@ await runBars({
     if (qty === 0n) {
       peakClose = null;
       heldBars = 0;
-      if (closes.length > LOOKBACK) {
+      if (closes.length > LOOKBACK && closes.length > cooldownUntil) {
         const old = closes[closes.length - 1 - LOOKBACK];
         // close / old - 1 > ENTRY_BPS / 10000, in integers.
         if (close * 10000n > old * (10000n + ENTRY_BPS)) {
@@ -85,6 +91,8 @@ await runBars({
     // close / peakClose - 1 < -TRAIL_BPS / 10000, in integers.
     const fell = close * 10000n < peakClose * (10000n - TRAIL_BPS);
     if (fell || heldBars >= MAX_HOLD) {
+      // No re-entry for the next 30 bars.
+      cooldownUntil = closes.length + 30;
       return [
         {
           side: 'sell',
